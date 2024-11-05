@@ -3,7 +3,7 @@
 
 逆向Pieces-OS GRPC流并转换为标准OpenAI接口的项目
 
-所有模型均由 Pieces-OS 提供
+所有模型均由 Pieces-OS 提供，本项目参考 [Nekohy/pieces-os](https://github.com/Nekohy/pieces-os) 开发，感谢大佬的贡献
 
 # 许可证
 
