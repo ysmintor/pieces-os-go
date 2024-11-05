@@ -29,7 +29,14 @@ func (h *ChatHandler) HandleCompletion(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": err.Error(),
+				"type":    "invalid_request_error",
+				"param":   nil,
+				"code":    "invalid_request",
+			},
+		})
 		return
 	}
 
@@ -93,8 +100,31 @@ func (h *ChatHandler) HandleCompletion(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.chatService.CreateCompletion(r.Context(), &req)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
+
+		// 检查是否是 APIError
+		if apiErr, ok := err.(*model.APIError); ok {
+			w.WriteHeader(apiErr.Status)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]interface{}{
+					"message": apiErr.Message,
+					"type":    "invalid_request_error",
+					"param":   "model",
+					"code":    apiErr.Code,
+				},
+			})
+			return
+		}
+
+		// 其他错误使用 500
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]interface{}{
+				"message": err.Error(),
+				"type":    "internal_error",
+				"param":   nil,
+				"code":    "internal_error",
+			},
+		})
 		return
 	}
 

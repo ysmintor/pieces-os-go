@@ -10,11 +10,11 @@ func CountClaudeTokens(text string) (int, error) {
 	if claudeTokenizer == nil {
 		return 0, ErrTokenizerNotInitialized
 	}
-	encoding, err := claudeTokenizer.EncodeSingle(text)
-	if err != nil {
-		return 0, err
+	ids, _ := claudeTokenizer.Encode(text, true)
+	if ids == nil {
+		return 0, nil
 	}
-	return encoding.Len(), nil
+	return len(ids), nil
 }
 
 // NumTokensFromClaudeMessage 计算Claude消息的token数量

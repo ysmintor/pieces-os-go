@@ -10,6 +10,7 @@ const (
 	ErrRateLimitExceeded  ErrorCode = "rate_limit_exceeded"
 	ErrInternalError      ErrorCode = "internal_error"
 	ErrServiceUnavailable ErrorCode = "service_unavailable"
+	ErrModelNotFound      ErrorCode = "model_not_found"
 )
 
 type APIError struct {

@@ -40,6 +40,13 @@ services:
           memory: 256M
     security_opt:
       - no-new-privileges:true
+      - seccomp=unconfined  # 如果需要更好的系统调用隔离
+    read_only: true        # 使容器根文件系统只读
+    tmpfs:                 # 为需要写入的临时文件提供 tmpfs
+      - /tmp
+    cap_drop:             # 删除不需要的 Linux 功能
+      - ALL
+    cap_add:              # 只添加必要的功能
     logging:
       driver: "json-file"
       options:

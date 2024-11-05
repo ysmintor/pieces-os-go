@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"pieces-os-go/internal/config"
 	"pieces-os-go/internal/model"
 	"strings"
@@ -18,9 +19,11 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 type GRPCService struct {
@@ -145,6 +148,7 @@ func createNewConnection(addr string) (*grpc.ClientConn, error) {
 		grpc.WithKeepaliveParams(kacp),
 		grpc.WithInitialWindowSize(1<<20),     // 1MB
 		grpc.WithInitialConnWindowSize(1<<20), // 1MB
+		grpc.WithUserAgent("dart-grpc/2.0.0"), // 添加 User-Agent 设置
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connection error")
@@ -156,10 +160,10 @@ func createNewConnection(addr string) (*grpc.ClientConn, error) {
 func (s *GRPCService) SendCompletion(ctx context.Context, req *model.ChatCompletionRequest) (*model.ChatCompletionResponse, error) {
 	// 空值检查
 	if req == nil {
-		return nil, fmt.Errorf("request cannot be nil")
+		return nil, model.NewAPIError(model.ErrInvalidRequest, "request cannot be nil", http.StatusBadRequest)
 	}
 	if s.config == nil {
-		return nil, fmt.Errorf("service configuration is not initialized")
+		return nil, model.NewAPIError(model.ErrInternalError, "service configuration is not initialized", http.StatusInternalServerError)
 	}
 
 	// 在开始时标准化模型名称
@@ -169,7 +173,11 @@ func (s *GRPCService) SendCompletion(ctx context.Context, req *model.ChatComplet
 	// 验证模型是否支持，如果不支持则尝试使用默认模型
 	if !model.IsModelSupported(req.Model) {
 		if s.config.DefaultModel == "" {
-			return nil, fmt.Errorf("unsupported model: %s", req.Model)
+			return nil, model.NewAPIError(
+				model.ErrModelNotFound,
+				fmt.Sprintf("Model '%s' does not exist", originalModel),
+				http.StatusNotFound,
+			)
 		}
 		req.Model = s.config.DefaultModel
 	}
@@ -312,10 +320,10 @@ func (s *GRPCService) SendCompletion(ctx context.Context, req *model.ChatComplet
 func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatCompletionRequest) (<-chan *model.ChatCompletionStreamResponse, error) {
 	// 空值检查
 	if req == nil {
-		return nil, fmt.Errorf("request cannot be nil")
+		return nil, model.NewAPIError(model.ErrInvalidRequest, "request cannot be nil", http.StatusBadRequest)
 	}
 	if s.config == nil {
-		return nil, fmt.Errorf("service configuration is not initialized")
+		return nil, model.NewAPIError(model.ErrInternalError, "service configuration is not initialized", http.StatusInternalServerError)
 	}
 
 	// 在开始时标准化模型名称
@@ -325,14 +333,22 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 	// 验证模型是否支持，如果不支持则尝试使用默认模型
 	if !model.IsModelSupported(req.Model) {
 		if s.config.DefaultModel == "" {
-			return nil, fmt.Errorf("unsupported model: %s", req.Model)
+			return nil, model.NewAPIError(
+				model.ErrModelNotFound,
+				fmt.Sprintf("Model '%s' does not exist", originalModel),
+				http.StatusNotFound,
+			)
 		}
 		req.Model = s.config.DefaultModel
 	}
 	// 验证模型是否支持，如果不支持则尝试使用默认模型
 	if !model.IsModelSupported(req.Model) {
 		if s.config.DefaultModel == "" {
-			return nil, fmt.Errorf("unsupported model: %s", req.Model)
+			return nil, model.NewAPIError(
+				model.ErrModelNotFound,
+				fmt.Sprintf("Model '%s' does not exist", originalModel),
+				http.StatusNotFound,
+			)
 		}
 		req.Model = s.config.DefaultModel
 	}
@@ -384,7 +400,7 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 							content := resp.Body.MessageWarpper.Message.Message
 							fullContent += content
 
-							response := model.ChatCompletionStreamResponse{
+							response := &model.ChatCompletionStreamResponse{
 								ID:      responseID,
 								Object:  model.ObjectChatCompletionChunk,
 								Created: int64(resp.Body.Time),
@@ -404,12 +420,12 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 								isFirstChunk = false
 							}
 
-							responseChan <- &response
+							responseChan <- response
 						}
 
 						// 然后发送最终的完成响应
 						completionTokens = tokenizer.NumTokensFromText(fullContent, req.Model)
-						finalResponse := model.ChatCompletionStreamResponse{
+						finalResponse := &model.ChatCompletionStreamResponse{
 							ID:      responseID,
 							Object:  model.ObjectChatCompletionChunk,
 							Created: int64(resp.Body.Time),
@@ -427,7 +443,7 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 								TotalTokens:      promptTokens + completionTokens,
 							},
 						}
-						responseChan <- &finalResponse
+						responseChan <- finalResponse
 						return
 					}
 
@@ -435,7 +451,7 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 						content := resp.Body.MessageWarpper.Message.Message
 						fullContent += content
 
-						response := model.ChatCompletionStreamResponse{
+						response := &model.ChatCompletionStreamResponse{
 							ID:      responseID,
 							Object:  model.ObjectChatCompletionChunk,
 							Created: int64(resp.Body.Time),
@@ -456,7 +472,7 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 						}
 
 						select {
-						case responseChan <- &response:
+						case responseChan <- response:
 						case <-ctx.Done():
 							return
 						}
@@ -508,13 +524,47 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 			for {
 				select {
 				case <-ctx.Done():
-					log.Printf("Vertex stream timeout or canceled")
+					log.Printf("Stream timeout or canceled")
 					return
 				default:
 					resp, err := stream.Recv()
 					if err != nil {
 						if err != io.EOF {
-							log.Printf("Vertex stream error: %v", err)
+							// 改进错误处理，区分不同类型的错误
+							if st, ok := status.FromError(err); ok {
+								// 处理 RST_STREAM 错误
+								if st.Code() == codes.Internal && strings.Contains(st.Message(), "RST_STREAM") {
+									log.Printf("Stream terminated by RST_STREAM")
+									return
+								}
+								log.Printf("Stream error with code %v: %v", st.Code(), st.Message())
+							} else {
+								log.Printf("Stream error: %v", err)
+							}
+						}
+						// 发送最终响应
+						if fullContent != "" {
+							completionTokens, _ := tokenizer.CountTokens(fullContent)
+							completionTokens += 3
+							finalResponse := &model.ChatCompletionStreamResponse{
+								ID:      responseID,
+								Object:  model.ObjectChatCompletionChunk,
+								Created: time.Now().Unix(),
+								Model:   originalModel,
+								Choices: []*model.ChatCompletionStreamChoice{
+									{
+										Delta:        &model.ChatCompletionStreamDelta{},
+										Index:        0,
+										FinishReason: model.FinishReasonStop,
+									},
+								},
+								Usage: &model.Usage{
+									PromptTokens:     promptTokens,
+									CompletionTokens: completionTokens,
+									TotalTokens:      promptTokens + completionTokens,
+								},
+							}
+							responseChan <- finalResponse
 						}
 						return
 					}
@@ -640,36 +690,31 @@ func (s *GRPCService) Close() error {
 // 辅助函数
 func buildGRPCRequest(req *model.ChatCompletionRequest) interface{} {
 	if model.IsGPTModel(req.Model) {
-		var messages []*gptpb.Message
-
-		// 首先添加系统消息
 		var systemContent string
+		var dialogContent string
+
+		// 处理消息
 		for _, msg := range req.Messages {
 			if msg.Role == model.RoleSystem {
-				systemContent += msg.Content + "\n"
-			}
-		}
-		if systemContent != "" {
-			messages = append(messages, &gptpb.Message{
-				Role:    0, // system role
-				Message: systemContent,
-			})
-		}
-
-		// 然后添加用户和助手的对话
-		var dialogContent string
-		for _, msg := range req.Messages {
-			if msg.Role != model.RoleSystem {
+				systemContent += fmt.Sprintf("system:%s;\r\n", msg.Content)
+			} else {
 				dialogContent += fmt.Sprintf("%s:%s;\r\n", msg.Role, msg.Content)
 			}
 		}
+
+		messages := []*gptpb.Message{}
+		if systemContent != "" {
+			messages = append(messages, &gptpb.Message{
+				Role:    0,
+				Message: systemContent,
+			})
+		}
 		if dialogContent != "" {
 			messages = append(messages, &gptpb.Message{
-				Role:    1, // user role
+				Role:    1,
 				Message: dialogContent,
 			})
 		}
-
 		grpcReq := &gptpb.Request{
 			Models:      req.Model,
 			Messages:    messages,
@@ -694,10 +739,10 @@ func buildGRPCRequest(req *model.ChatCompletionRequest) interface{} {
 		}
 
 		if system != "" {
-			system = system + ";\r\n"
+			system = "system:" + system + ";\r\n"
 		}
 
-		grpcReq := &vertexpb.Requests{
+		return &vertexpb.Requests{
 			Models: model.NormalizeModelName(req.Model),
 			Args: &vertexpb.Args{
 				Messages: &vertexpb.Messages{
@@ -707,13 +752,6 @@ func buildGRPCRequest(req *model.ChatCompletionRequest) interface{} {
 				Rules: system,
 			},
 		}
-
-		// log.Printf("Building Vertex Request:\nModel: %s\nMessage: %s\nRules: %s",
-		// 	grpcReq.Models,
-		// 	grpcReq.Args.Messages.Message,
-		// 	grpcReq.Args.Rules)
-
-		return grpcReq
 	}
 }
 
@@ -733,7 +771,7 @@ func buildTokenCountParams(messages []model.ChatMessage) (tokenizer.TokenCountPa
 				currentMessage = msg
 			} else if currentMessage.Role == msg.Role {
 				// 合并相同角色的连续消息
-				currentMessage.Content += "\n\n" + msg.Content
+				currentMessage.Content += "\n" + msg.Content
 			} else {
 				// 角色变化，保存当前消息并开始新消息
 				conversations = append(conversations, currentMessage)
@@ -747,7 +785,7 @@ func buildTokenCountParams(messages []model.ChatMessage) (tokenizer.TokenCountPa
 		conversations = append(conversations, currentMessage)
 	}
 
-	system := strings.Join(systemMessages, "\n\n")
+	system := strings.Join(systemMessages, "\n")
 
 	return tokenizer.TokenCountParams{
 		Messages: conversations,

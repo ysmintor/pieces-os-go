@@ -1,13 +1,45 @@
 # 构建阶段
-FROM golang:1.23.2-bullseye AS builder
+FROM golang:1.23.2-bookworm AS builder
+
+# 添加架构参数
+ARG TARGETARCH
 
 WORKDIR /app
 
 # 设置 Go 环境变量
 ENV GO111MODULE=on \
-    CGO_ENABLED=0 \
+    CGO_ENABLED=1 \
     GOOS=linux \
-    GOPROXY=https://goproxy.io,direct
+    GOPROXY=direct \
+    GOPRIVATE=github.com/wisdgod/grpc-go
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 下载并安装 tokenizers
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      TOKENIZERS_URL="https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-arm64.tar.gz"; \
+      # arm64 需要安装交叉编译工具 \
+      apt-get update && apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu; \
+      export CC=aarch64-linux-gnu-gcc; \
+      export CXX=aarch64-linux-gnu-g++; \
+    else \
+      TOKENIZERS_URL="https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-amd64.tar.gz"; \
+    fi && \
+    wget $TOKENIZERS_URL -O tokenizers.tar.gz && \
+    tar xzf tokenizers.tar.gz && \
+    cp *.{so,a} /usr/local/lib/ 2>/dev/null || true && \
+    ldconfig && \
+    rm -f tokenizers.tar.gz
+
+# 设置 tokenizers 环境变量
+ENV TOKENIZERS_LIB_DIR=/usr/local/lib \
+    CGO_LDFLAGS="-L/usr/local/lib -ltokenizers" \
+    LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH \
+    LIBRARY_PATH=/usr/local/lib:$LIBRARY_PATH
 
 # 复制依赖文件并下载
 COPY go.mod go.sum ./
@@ -21,7 +53,7 @@ ARG VERSION
 ARG BUILD_TIME
 
 RUN go build -trimpath \
-    -ldflags="-s -w -extldflags '-static' -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
+    -ldflags="-s -w  -extldflags '-static' -X main.Version=${VERSION} -X main.BuildTime=${BUILD_TIME}" \
     -o pieces-os-go ./cmd/server/.
 
 # 运行阶段

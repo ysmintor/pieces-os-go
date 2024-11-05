@@ -2,8 +2,8 @@ name: build-and-release
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - v*
 
 permissions:
   contents: write
@@ -34,20 +34,19 @@ jobs:
             output_name: pieces-os-go-macos
             ldflags: "-s -w -X main.Version=v${{ github.run_number }}"
 
+          - os: macos-latest
+            arch: arm64
+            goos: darwin
+            goarch: arm64
+            output_name: pieces-os-go-macos-arm64
+            ldflags: "-s -w -X main.Version=v${{ github.run_number }}"
+
           - os: windows-latest
             arch: amd64
             goos: windows
             goarch: amd64
             output_name: pieces-os-go.exe
             ldflags: "-s -w -X main.Version=v${{ github.run_number }}"
-
-          - os: ubuntu-latest
-            arch: amd64
-            goos: freebsd
-            goarch: amd64
-            output_name: pieces-os-go-freebsd
-            ldflags: "-s -w -extldflags '-static' -X main.Version=v${{ github.run_number }}"
-            is_freebsd: true
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -56,57 +55,251 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 设置 FreeBSD 环境
-        if: ${{ matrix.is_freebsd }}
-        uses: vmactions/freebsd-vm@v1.1.5
+      - name: Go 模块缓存
+        uses: actions/cache@v4.1.2
         with:
-          usesh: true
-          prepare: |
-            pkg update
-            pkg install -y wget
-            wget https://dl.google.com/go/go1.23.2.freebsd-amd64.tar.gz
-            tar -C /usr/local -xzf go1.23.2.freebsd-amd64.tar.gz
-            rm go1.23.2.freebsd-amd64.tar.gz
-            ln -s /usr/local/go/bin/go /usr/local/bin/go
-          run: |
-            export PATH=$PATH:/usr/local/go/bin
-            go version
-            go mod download
-            go build -trimpath -ldflags "${{ matrix.ldflags }}" -o ${{ matrix.output_name }} ./cmd/server/.
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: ${{ runner.os }}-${{ matrix.arch }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-go-
+            ${{ runner.os }}-go-
 
-      - name: 设置 Go 环境
-        if: ${{ !matrix.is_freebsd }}
-        uses: actions/setup-go@v5.1.0
+      - name: Rust 缓存
+        uses: actions/cache@v4.1.2
         with:
-          go-version: '>=1.23.0'
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ~/.rustup
+          key: ${{ runner.os }}-${{ matrix.arch }}-rust-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml', 'rust-toolchain.toml', 'rust-toolchain') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.arch }}-rust-
+            ${{ runner.os }}-rust-
+
+      # - name: 系统依赖缓存
+      #   uses: actions/cache@v4.1.2
+      #   with:
+      #     path: |
+      #       /usr/local/lib/libtokenizers*
+      #       tokenizers_build
+      #       ~/.brew
+      #     key: ${{ runner.os }}-${{ matrix.arch }}-deps-${{ hashFiles('.github/workflows/build-and-release.yml') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-${{ matrix.arch }}-deps-
+      #       ${{ runner.os }}-deps-
 
       - name: 设置构建时间
         id: build_time
         shell: bash
         run: |
           if [ "$RUNNER_OS" == "Windows" ]; then
-            echo "BUILD_TIME=$(powershell -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-dd_HH:mm:ss')")" >> "$GITHUB_OUTPUT"
+            echo "BUILD_TIME=$(powershell -Command "(Get-Date).ToUniversalTime().ToString('2006-01-02T15:04:05Z')")" >> "$GITHUB_OUTPUT"
           else
-            echo "BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')" >> "$GITHUB_OUTPUT"
+            echo "BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5.1.0
+        with:
+          go-version: '1.23.2'
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装 Linux 依赖
+        if: matrix.goos == 'linux'
+        run: |
+          # 安装系统依赖
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+          
+          # 根据架构选择正确的预构建包
+          if [ "${{ matrix.goarch }}" = "amd64" ]; then
+            TOKENIZERS_URL="https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-amd64.tar.gz"
+          elif [ "${{ matrix.goarch }}" = "arm64" ]; then
+            TOKENIZERS_URL="https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-arm64.tar.gz"
+            # arm64 需要安装交叉编译工具
+            sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            echo "CC=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+            echo "CXX=aarch64-linux-gnu-g++" >> $GITHUB_ENV
+          fi
+          
+          # 下载并解压预构建 tokenizers
+          wget $TOKENIZERS_URL -O tokenizers.tar.gz
+          tar xzf tokenizers.tar.gz
+          
+          # 复制库文件到系统目录
+          sudo cp *.{so,a} /usr/local/lib/ 2>/dev/null || true
+          sudo ldconfig
+          
+          # 设置 tokenizers 库目录
+          echo "TOKENIZERS_LIB_DIR=/usr/local/lib" >> $GITHUB_ENV
+          
+          # 设置环境变量
+          echo "CGO_LDFLAGS=-L/usr/local/lib -ltokenizers" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=/usr/local/lib:$LIBRARY_PATH" >> $GITHUB_ENV
+
+      - name: 安装 Windows 依赖
+        if: matrix.goos == 'windows'
+        shell: bash
+        run: |
+          # 设置构建目录变量
+          WORKSPACE_DIR=$(pwd)
+          TOKENIZERS_BUILD_DIR="${WORKSPACE_DIR}/tokenizers_build"
+          echo "TOKENIZERS_BUILD_DIR=${TOKENIZERS_BUILD_DIR}" >> $GITHUB_ENV
+          
+          # 清理并重新创建构建目录
+          rm -rf "${TOKENIZERS_BUILD_DIR}"
+          mkdir -p "${TOKENIZERS_BUILD_DIR}"
+          cd "${TOKENIZERS_BUILD_DIR}"
+          
+          # 设置 Rust 环境
+          mkdir -p ~/.cargo
+          cat > ~/.cargo/config.toml << EOF
+          [target.x86_64-pc-windows-gnu]
+          linker = "x86_64-w64-mingw32-gcc"
+          ar = "x86_64-w64-mingw32-ar"
+          rustflags = [
+            "-C", "target-feature=+crt-static",
+            "-C", "link-self-contained=yes",
+            "-C", "link-args=-static -static-libgcc -static-libstdc++",
+            "-C", "opt-level=3"
+          ]
+          EOF
+          
+          # 克隆并构建 tokenizers
+          git clone --depth 1 https://github.com/daulet/tokenizers.git . || exit 1
+          
+          # 使用完全静态构建
+          RUSTFLAGS="-C target-feature=+crt-static -C link-self-contained=yes" cargo build --release --target x86_64-pc-windows-gnu --verbose
+          
+          # 设置输出目录变量
+          TOKENIZERS_LIB_DIR="${TOKENIZERS_BUILD_DIR}/target/x86_64-pc-windows-gnu/release"
+          echo "TOKENIZERS_LIB_DIR=${TOKENIZERS_LIB_DIR}" >> $GITHUB_ENV
+          
+          # 设置环境变量
+          echo "CGO_ENABLED=1" >> $GITHUB_ENV
+          echo "CC=x86_64-w64-mingw32-gcc" >> $GITHUB_ENV
+          echo "CXX=x86_64-w64-mingw32-g++" >> $GITHUB_ENV
+          echo "CGO_LDFLAGS=-L${TOKENIZERS_LIB_DIR} -ltokenizers -static -static-libgcc -static-libstdc++" >> $GITHUB_ENV
+          echo "${TOKENIZERS_LIB_DIR}" >> $GITHUB_PATH
+
+      - name: 安装 macOS 依赖
+        if: matrix.goos == 'darwin'
+        run: |
+          # 安装系统依赖
+          brew install openssl@3 pkg-config
+          
+          # 设置 OpenSSL 环境变量
+          echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          
+          # 根据架构选择正确的预构建包
+          if [ "${{ matrix.goarch }}" = "amd64" ]; then
+            TOKENIZERS_URL="https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.darwin-x86_64.tar.gz"
+          elif [ "${{ matrix.goarch }}" = "arm64" ]; then
+            TOKENIZERS_URL="https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.darwin-aarch64.tar.gz"
+          fi
+          
+          # 下载并解压预构建的 tokenizers
+          wget $TOKENIZERS_URL -O tokenizers.tar.gz
+          tar xzf tokenizers.tar.gz
+          
+          # 修改：解压后检查实际文件名并移动文件
+          tar xzf tokenizers.tar.gz
+          
+          # 设置当前工作目录为 tokenizers 库目录
+          TOKENIZERS_LIB_DIR=$PWD
+          
+          # 如果存在 libtokenizers.a，将其移动到一个临时目录
+          if [ -f "libtokenizers.a" ]; then
+            mkdir -p tokenizers_lib
+            mv libtokenizers.a tokenizers_lib/
+            TOKENIZERS_LIB_DIR=$PWD/tokenizers_lib
+          fi
+          
+          echo "TOKENIZERS_LIB_DIR=${TOKENIZERS_LIB_DIR}" >> $GITHUB_ENV
+          
+          # 修改：设置环境变量时处理未定义变量
+          echo "CGO_LDFLAGS=-L$TOKENIZERS_LIB_DIR -ltokenizers" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=$TOKENIZERS_LIB_DIR:${LD_LIBRARY_PATH:-}" >> $GITHUB_ENV
+          echo "LIBRARY_PATH=$TOKENIZERS_LIB_DIR:${LIBRARY_PATH:-}" >> $GITHUB_ENV
+          
+          if [ "${{ matrix.goarch }}" = "arm64" ]; then
+            echo "CGO_CFLAGS=-arch arm64" >> $GITHUB_ENV
+          elif [ "${{ matrix.goarch }}" = "amd64" ]; then
+            echo "CGO_CFLAGS=-arch x86_64" >> $GITHUB_ENV
           fi
 
       - name: 构建后端
-        if: ${{ !matrix.is_freebsd }}
         env:
+          CGO_ENABLED: 1
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           OUTPUT_NAME: ${{ matrix.output_name }}
           BUILD_TIME: ${{ steps.build_time.outputs.BUILD_TIME }}
+          CC: ${{ matrix.goos == 'windows' && 'x86_64-w64-mingw32-gcc' || env.CC || 'gcc' }}
+          CXX: ${{ matrix.goos == 'windows' && 'x86_64-w64-mingw32-g++' || env.CXX || 'g++' }}
+          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH || '' }}
+          LIBRARY_PATH: ${{ env.LIBRARY_PATH || '' }}
+          CGO_CFLAGS: ${{ matrix.goos == 'windows' && '-D_WIN32_WINNT=0x0601' || env.CGO_CFLAGS || '' }}
         shell: bash
         run: |
-          go mod download
-          go build -trimpath -ldflags "${{ matrix.ldflags }} -X main.BuildTime=${{ env.BUILD_TIME }}" -o $OUTPUT_NAME ./cmd/server/.
+          set -euo pipefail
+
+          WORKSPACE_DIR=$(pwd)
+          
+          if [ "$GOOS" = "windows" ]; then
+            # 安装 winlibs 的 MinGW-w64
+            mkdir -p /tmp/winlibs
+            cd /tmp/winlibs
+            curl -L -o winlibs.zip https://github.com/brechtsanders/winlibs_mingw/releases/download/14.2.0posix-19.1.1-12.0.0-ucrt-r2/winlibs-x86_64-posix-seh-gcc-14.2.0-llvm-19.1.1-mingw-w64ucrt-12.0.0-r2.zip
+            unzip winlibs.zip
+            rm winlibs.zip
+            export PATH="/tmp/winlibs/mingw64/bin:$PATH"
+
+            cd $WORKSPACE_DIR
+            
+            # Windows 特定的链接标志
+            export CGO_LDFLAGS="-L${TOKENIZERS_LIB_DIR} -ltokenizers -static -lws2_32 -luserenv -lbcrypt -lntdll"
+            # 添加 Rust 静态链接标志
+            export RUSTFLAGS="-C target-feature=+crt-static"
+          fi
+          
+          echo "CGO_LDFLAGS: $CGO_LDFLAGS"
+          echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
+          echo "LIBRARY_PATH: $LIBRARY_PATH"
+          
+          echo "开始下载依赖..."
+          export GOPROXY=direct
+          export GOPRIVATE=github.com/wisdgod/grpc-go
+          go mod download || exit 1
+          
+          echo "开始构建..."
+          go build -v -x -trimpath -ldflags "${{ matrix.ldflags }} -X main.BuildTime=${{ env.BUILD_TIME }}" -o $OUTPUT_NAME ./cmd/server/. || exit 1
+          
+          echo "构建完成"
+
+      - name: 打包 Tokenizers 库
+        shell: bash
+        run: |
+          if [ -f "${TOKENIZERS_LIB_DIR}/libtokenizers.a" ]; then
+            cp "${TOKENIZERS_LIB_DIR}/libtokenizers.a" ./
+            tar czf libtokenizers.${{ matrix.goos }}.${{ matrix.arch }}.tar.gz libtokenizers.a
+          fi
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4.4.3
         with:
           name: ${{ matrix.output_name }}
-          path: ${{ matrix.output_name }}
+          path: |
+            ${{ matrix.output_name }}
+            libtokenizers.${{ matrix.goos }}.${{ matrix.arch }}.tar.gz
 
   create_release:
     needs: backend_build_and_publish
@@ -117,13 +310,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 创建版本标签
-        run: |
-          git config --global user.name 'GitHub Actions'
-          git config --global user.email 'actions@github.com'
-          git tag v${{ github.run_number }}
-          git push origin v${{ github.run_number }}
-
       - name: 下载所有构建产物
         uses: actions/download-artifact@v4.1.8
         with:
@@ -133,8 +319,8 @@ jobs:
       - name: 发布到 GitHub
         uses: softprops/action-gh-release@v2.0.9
         with:
-          tag_name: v${{ github.run_number }}
-          name: "Pieces OS v${{ github.run_number }}"
+          tag_name: ${{ github.ref_name }}
+          name: "Pieces OS ${{ github.ref_name }}"
           files: ./artifacts/*
           draft: false
           generate_release_notes: true

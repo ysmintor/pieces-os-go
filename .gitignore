@@ -3,5 +3,6 @@ build.*
 vercel.json
 api/index.js
 protos/*.proto
-run.py
+run.*
 *.bak
+GIT_COMMIT_CONVENTION.md

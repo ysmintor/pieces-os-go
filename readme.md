@@ -5,9 +5,41 @@
 
 所有模型均由 Pieces-OS 提供
 
-本项目基于GPLV3协议开源
+# 许可证
 
-如果帮助到了你，能否给一个Star呢？ 
+本项目基于 GNU General Public License v3.0 (GPLv3) 开源。
+
+## 主要权利和限制
+
+- ✅ 商业使用（需遵守开源要求）
+- ✅ 修改源代码
+- ✅ 分发
+- ✅ 私人使用
+- ⚠️ 必须开源：任何基于本项目的衍生作品必须以相同的许可证（GPLv3）开源
+- ⚠️ 声明变更：必须标注修改过的文件
+- ⚠️ 许可证和版权声明：必须包含原始许可证和版权声明
+- ⚠️ 相同许可：衍生作品必须使用相同的许可证（GPLv3）
+
+## 版权声明
+
+在每个源代码文件的开头添加：
+
+```
+Copyright (C) [年份] [作者名]
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
 
 # 免责声明
 本项目仅供学习交流使用，不得用于商业用途，如有侵权请联系删除
@@ -15,46 +47,14 @@
 # DEMO站
 **请善待公共服务，尽量自己搭建**
 
-[Vercel](https://pieces.nekomoon.cc)
+[Koyeb](https://calcpi.wisdgod.com/)
 
-[Cloudflare worker反代koyeb](https://pieces.464888.xyz)
-
-# 一键部署
-[![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/Nekohy/pieces-os&project-name=Pieces-OS&repository-name=Pieces-OS)
-
-[![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?name=pieces-os&type=docker&image=chb2024%2Fpieces-os%3Alatest&regions=was&env%5B%5D=&ports=8787%3Bhttp%3B%2F)
-
-请注意下列环境变量！私人使用请添加API_KEY！
-
-cloudflare work反代koyeb
-```javascript
-export default {
-  async fetch(request, env) {
-    // 创建目标 URL 改成你自己的部署地址，不带协议头和/
-    const url = new URL(request.url);
-    url.hostname = 'abcdefg.koyeb.app';
-    
-    // 创建新的请求对象
-    const newRequest = new Request(url, {
-      method: request.method,
-      headers: request.headers,
-      body: request.method === 'POST' ? request.body : null,
-      redirect: 'follow'
-    });
-
-    // 转发请求并返回响应
-    return fetch(newRequest);
-  }
-}
-```
 
 # todo
 - [x] 流式实现
-- [x] Serverless部署
-- [x] Docker支持
+- [ ] Docker支持
 - [x] Go语言重构
-- [x] 实现同时将日志写入文件(V8)
-- [x] 实现GPT和Claude的Tokens计算(V9)
+- [x] 实现Tokens计算
 
 # 项目结构
 ```
@@ -102,9 +102,6 @@ pieces-os-go/                          # 项目根目录
       errors.go                     # 错误定义
       models.go                     # 分词器模型
       num.go                        # Token计数实现
-  protos/                           # 原始协议定义
-    GPTInferenceService.proto      # GPT服务协议
-    VertexInferenceService.proto   # Vertex服务协议
   cloud_model.json                  # 云端模型配置
   go.mod                            # Go模块定义
   go.sum                            # 依赖版本锁定
@@ -143,24 +140,38 @@ cd pieces-os-go
 
 2. 安装依赖
 ```bash
+export GOPROXY=direct
+export GOPRIVATE=github.com/wisdgod/grpc-go
 go mod download
 ```
 
 3. 运行项目
 ```bash
+# Linux / MacOS
+export CGO_ENABLED=1
+export CGO_LDFLAGS=-L/path/to/tokenizers -ltokenizers -static
+export GOOS=linux
+export GOARCH=amd64
+go run cmd/server/main.go
+
+# Windows bash
+export CGO_ENABLED=1
+export CGO_LDFLAGS=-L/path/to/tokenizers -ltokenizers -static -lws2_32 -lbcrypt -luserenv -lntdll
+export GOOS=windows
+export GOARCH=amd64
 go run cmd/server/main.go
 ```
 
 # 测试命令
 ```bash
 # 获取模型列表
-curl --request GET 'http://127.0.0.1:8787/v1/models' \
+curl --request GET 'http://localhost:8787/v1/models' \
   --header 'Content-Type: application/json'
 ```
 
 ```bash
 # 发送聊天请求
-curl --request POST 'http://127.0.0.1:8787/v1/chat/completions' \
+curl --request POST 'http://localhost:8787/v1/chat/completions' \
   --header 'Content-Type: application/json' \
   --data '{
     "messages": [
