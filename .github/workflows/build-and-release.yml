@@ -1,0 +1,142 @@
+name: build-and-release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  backend_build_and_publish:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+            goos: linux
+            goarch: amd64
+            output_name: pieces-os-go
+            ldflags: "-s -w -extldflags '-static' -X main.Version=v${{ github.run_number }}"
+
+          - os: ubuntu-latest
+            arch: arm64
+            goos: linux
+            goarch: arm64
+            output_name: pieces-os-go-arm64
+            ldflags: "-s -w -extldflags '-static' -X main.Version=v${{ github.run_number }}"
+
+          - os: macos-latest
+            arch: amd64
+            goos: darwin
+            goarch: amd64
+            output_name: pieces-os-go-macos
+            ldflags: "-s -w -X main.Version=v${{ github.run_number }}"
+
+          - os: windows-latest
+            arch: amd64
+            goos: windows
+            goarch: amd64
+            output_name: pieces-os-go.exe
+            ldflags: "-s -w -X main.Version=v${{ github.run_number }}"
+
+          - os: ubuntu-latest
+            arch: amd64
+            goos: freebsd
+            goarch: amd64
+            output_name: pieces-os-go-freebsd
+            ldflags: "-s -w -extldflags '-static' -X main.Version=v${{ github.run_number }}"
+            is_freebsd: true
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: 设置 FreeBSD 环境
+        if: ${{ matrix.is_freebsd }}
+        uses: vmactions/freebsd-vm@v1.1.5
+        with:
+          usesh: true
+          prepare: |
+            pkg update
+            pkg install -y wget
+            wget https://dl.google.com/go/go1.23.2.freebsd-amd64.tar.gz
+            tar -C /usr/local -xzf go1.23.2.freebsd-amd64.tar.gz
+            rm go1.23.2.freebsd-amd64.tar.gz
+            ln -s /usr/local/go/bin/go /usr/local/bin/go
+          run: |
+            export PATH=$PATH:/usr/local/go/bin
+            go version
+            go mod download
+            go build -trimpath -ldflags "${{ matrix.ldflags }}" -o ${{ matrix.output_name }} ./cmd/server/.
+
+      - name: 设置 Go 环境
+        if: ${{ !matrix.is_freebsd }}
+        uses: actions/setup-go@v5.1.0
+        with:
+          go-version: '>=1.23.0'
+
+      - name: 设置构建时间
+        id: build_time
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            echo "BUILD_TIME=$(powershell -Command "(Get-Date).ToUniversalTime().ToString('yyyy-MM-dd_HH:mm:ss')")" >> "$GITHUB_OUTPUT"
+          else
+            echo "BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 构建后端
+        if: ${{ !matrix.is_freebsd }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          OUTPUT_NAME: ${{ matrix.output_name }}
+          BUILD_TIME: ${{ steps.build_time.outputs.BUILD_TIME }}
+        shell: bash
+        run: |
+          go mod download
+          go build -trimpath -ldflags "${{ matrix.ldflags }} -X main.BuildTime=${{ env.BUILD_TIME }}" -o $OUTPUT_NAME ./cmd/server/.
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4.4.3
+        with:
+          name: ${{ matrix.output_name }}
+          path: ${{ matrix.output_name }}
+
+  create_release:
+    needs: backend_build_and_publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: 创建版本标签
+        run: |
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'actions@github.com'
+          git tag v${{ github.run_number }}
+          git push origin v${{ github.run_number }}
+
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4.1.8
+        with:
+          path: ./artifacts
+          merge-multiple: true
+
+      - name: 发布到 GitHub
+        uses: softprops/action-gh-release@v2.0.9
+        with:
+          tag_name: v${{ github.run_number }}
+          name: "Pieces OS v${{ github.run_number }}"
+          files: ./artifacts/*
+          draft: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

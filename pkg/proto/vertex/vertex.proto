@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package runtime.aot.machine_learning.parents.vertex;
+
+option go_package = "pkg/proto/vertex";
+
+service VertexInferenceService {
+    rpc Predict (Requests) returns (Response);
+    rpc PredictWithStream (Requests) returns (stream Response);
+}
+
+// Global
+message Messages {
+    int64 unknown = 1;  // possibly constant 1(request)/3(response)
+    string message = 2;  // message content
+}
+
+// Requests
+message Requests {
+    string models = 1;  // model name
+    Args args = 2;
+}
+
+message Args {
+  reserved 1;
+  Messages messages = 2;  // message, can be treated as user message
+  string rules = 3;      // rules, can be treated as system message
+}
+
+// Response
+message Response {
+    int64 response_code = 2;  // response status code: 200, 439, etc
+    Args1 args = 4;
+}
+
+message Args1 {
+  Args2 args = 1;
+}
+
+message Args2 {
+    Messages args = 2;
+}

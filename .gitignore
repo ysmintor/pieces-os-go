@@ -1,0 +1,7 @@
+anti-patterns.md
+build.*
+vercel.json
+api/index.js
+protos/*.proto
+run.py
+*.bak
