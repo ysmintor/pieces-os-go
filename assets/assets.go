@@ -2,5 +2,5 @@ package assets
 
 import "embed"
 
-//go:embed *.tiktoken tokenizer.json
+//go:embed *.tiktoken *.json
 var Assets embed.FS

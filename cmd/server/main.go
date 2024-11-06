@@ -80,6 +80,9 @@ func main() {
 	// 打印版本信息
 	log.Printf("Starting Pieces-OS-Go Version: %s, BuildTime: %s", Version, BuildTime)
 
+	if err := model.InitModels(); err != nil {
+		log.Fatalf("Failed to initialize models: %v", err)
+	}
 	cfg := config.Load()
 	if err := middleware.InitLogger(cfg.LogFile); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)

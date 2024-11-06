@@ -3,9 +3,9 @@ package tokenizer
 import (
 	"bytes"
 	"fmt"
+	"pieces-os-go/assets"
 	"pieces-os-go/internal/model"
 	"pieces-os-go/pkg/tiktoken_loader"
-	"pieces-os-go/pkg/tiktoken_loader/assets"
 	"strings"
 
 	"github.com/daulet/tokenizers"

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"pieces-os-go/pkg/tiktoken_loader/assets"
+	"pieces-os-go/assets"
 )
 
 type OfflineLoader struct{}
