@@ -1,0 +1,70 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Programming Languages
+*.go text eol=lf
+*.java text eol=lf
+*.scala text eol=lf
+*.kt text eol=lf
+*.rs text eol=lf
+*.rb text eol=lf
+*.php text eol=lf
+*.swift text eol=lf
+*.c text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+*.cs text eol=lf
+*.fs text eol=lf
+*.r text eol=lf
+*.pl text eol=lf
+*.ex text eol=lf
+*.exs text eol=lf
+*.dart text eol=lf
+*.lua text eol=lf
+*.m text eol=lf
+*.sql text eol=lf
+
+# Configuration and Documentation
+.dockerignore text eol=lf
+Dockerfile text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.tiktoken text eol=lf
+*.proto text eol=lf
+*.txt text eol=lf
+
+# Web Development
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.vue text eol=lf
+
+# Scripts
+*.py text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary Files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.tiff binary
+*.webp binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.eot binary
+*.svg binary
+*.ico binary

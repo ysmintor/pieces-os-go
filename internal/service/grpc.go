@@ -188,87 +188,101 @@ func (s *GRPCService) SendCompletion(ctx context.Context, req *model.ChatComplet
 	if model.IsGPTModel(req.Model) {
 		conn, err = s.getConnection(s.config.GPTGRPCAddr)
 		if err != nil {
-			return nil, fmt.Errorf("service unavailable")
+			return nil, fmt.Errorf("service unavailable: %v", err)
 		}
 		defer s.gptPool.returnConnection(conn)
 
 		// 使用buildGRPCRequest构建请求
 		grpcReq := buildGRPCRequest(req).(*gptpb.Request)
+		if grpcReq == nil {
+			return nil, fmt.Errorf("failed to build GPT request")
+		}
 
 		client := gptpb.NewGPTInferenceServiceClient(conn)
 		resp, err := client.Predict(ctx, grpcReq)
 		if err != nil {
-			return nil, fmt.Errorf("request failed")
+			return nil, fmt.Errorf("request failed: %v", err)
+		}
+
+		// 添加空值检查
+		if resp == nil {
+			return nil, fmt.Errorf("received nil response")
 		}
 
 		// 检查响应状态码
 		if resp.ResponseCode != 200 && resp.ResponseCode != 0 {
-			return nil, fmt.Errorf("service error")
+			return nil, fmt.Errorf("service error: response code %d", resp.ResponseCode)
 		}
 
 		// 使用tokenizer计算token数量
 		promptTokens := tokenizer.NumTokensFromMessages(req.Messages, req.Model)
 
-		if resp.Body != nil && resp.Body.MessageWarpper != nil &&
-			resp.Body.MessageWarpper.Message != nil {
-			completionTokens := tokenizer.NumTokensFromMessage(&model.ChatMessage{
-				Role:    model.RoleAssistant,
-				Content: resp.Body.MessageWarpper.Message.Message,
-			}, req.Model)
-
-			// 转换为 OpenAI 格式响应
-			content := resp.Body.MessageWarpper.Message.Message
-			response := &model.ChatCompletionResponse{
-				ID:      resp.Body.Id,
-				Object:  model.ObjectChatCompletion,
-				Created: int64(resp.Body.Time),
-				Model:   originalModel,
-				Choices: []*model.Choice{
-					{
-						Message: &model.ChatMessage{
-							Role:    model.RoleAssistant,
-							Content: content,
-						},
-						Index: 0,
-					},
-				},
-				Usage: &model.Usage{
-					PromptTokens:     promptTokens,
-					CompletionTokens: completionTokens,
-					TotalTokens:      promptTokens + completionTokens,
-				},
-			}
-			return response, nil
-		} else {
-			return nil, fmt.Errorf("invalid response format")
+		// 增加响应结构的完整性检查
+		if resp.Body == nil || resp.Body.MessageWarpper == nil ||
+			resp.Body.MessageWarpper.Message == nil {
+			return nil, fmt.Errorf("invalid response structure")
 		}
+
+		content := resp.Body.MessageWarpper.Message.Message
+		if content == "" {
+			return nil, fmt.Errorf("empty response content")
+		}
+
+		completionTokens := tokenizer.NumTokensFromMessage(&model.ChatMessage{
+			Role:    model.RoleAssistant,
+			Content: content,
+		}, req.Model)
+
+		// 转换为 OpenAI 格式响应
+		response := &model.ChatCompletionResponse{
+			ID:      resp.Body.Id,
+			Object:  model.ObjectChatCompletion,
+			Created: int64(resp.Body.Time),
+			Model:   originalModel,
+			Choices: []*model.Choice{
+				{
+					Message: &model.ChatMessage{
+						Role:    model.RoleAssistant,
+						Content: content,
+					},
+					Index: 0,
+				},
+			},
+			Usage: &model.Usage{
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				TotalTokens:      promptTokens + completionTokens,
+			},
+		}
+		return response, nil
+
 	} else {
 		conn, err = s.getConnection(s.config.VertexGRPCAddr)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("service unavailable: %v", err)
 		}
 		defer s.vertexPool.returnConnection(conn)
 
 		// 使用buildGRPCRequest构建请求
 		grpcReq := buildGRPCRequest(req).(*vertexpb.Requests)
-
-		// 添加详细的请求日志
-		// log.Printf("Vertex Request Details:\nModel: %s\nArgs: %+v\nMessages: %+v\nRules: %s",
-		// 	grpcReq.Models,
-		// 	grpcReq.Args,
-		// 	grpcReq.Args.Messages,
-		// 	grpcReq.Args.Rules)
+		if grpcReq == nil {
+			return nil, fmt.Errorf("failed to build Vertex request")
+		}
 
 		client := vertexpb.NewVertexInferenceServiceClient(conn)
 		resp, err := client.Predict(ctx, grpcReq)
 		if err != nil {
-			// log.Printf("Vertex Error: %v", err)
 			return nil, fmt.Errorf("request failed: %v", err)
+		}
+
+		// 添加空值检查
+		if resp == nil {
+			return nil, fmt.Errorf("received nil response")
 		}
 
 		// 检查响应状态码
 		if resp.ResponseCode != 200 && resp.ResponseCode != 0 {
-			return nil, fmt.Errorf("service error")
+			return nil, fmt.Errorf("service error: response code %d", resp.ResponseCode)
 		}
 
 		// 使用tokenizer计算token数量
@@ -279,41 +293,47 @@ func (s *GRPCService) SendCompletion(ctx context.Context, req *model.ChatComplet
 			promptTokens = 0
 		}
 
-		if resp.Args != nil && resp.Args.Args != nil &&
-			resp.Args.Args.Args != nil && resp.Args.Args.Args.Message != "" {
-			completionTokens, err := tokenizer.CountTokens(resp.Args.Args.Args.Message)
-			if err != nil {
-				log.Printf("Error counting completion tokens: %v", err)
-				completionTokens = 0
-			} else {
-				completionTokens += 3
-			}
-
-			// 转换为 OpenAI 格式响应
-			response := &model.ChatCompletionResponse{
-				ID:      generateChatID(),
-				Object:  model.ObjectChatCompletion,
-				Created: time.Now().Unix(),
-				Model:   originalModel,
-				Choices: []*model.Choice{
-					{
-						Message: &model.ChatMessage{
-							Role:    model.RoleAssistant,
-							Content: resp.Args.Args.Args.Message,
-						},
-						Index: 0,
-					},
-				},
-				Usage: &model.Usage{
-					PromptTokens:     promptTokens,
-					CompletionTokens: completionTokens,
-					TotalTokens:      promptTokens + completionTokens,
-				},
-			}
-			return response, nil
-		} else {
-			return nil, fmt.Errorf("invalid response format")
+		// 增加响应结构的完整性检查
+		if resp.Args == nil || resp.Args.Args == nil ||
+			resp.Args.Args.Args == nil {
+			return nil, fmt.Errorf("invalid response structure")
 		}
+
+		content := resp.Args.Args.Args.Message
+		if content == "" {
+			return nil, fmt.Errorf("empty response content")
+		}
+
+		completionTokens, err := tokenizer.CountTokens(content)
+		if err != nil {
+			log.Printf("Error counting completion tokens: %v", err)
+			completionTokens = 0
+		} else {
+			completionTokens += 3
+		}
+
+		// 转换为 OpenAI 格式响应
+		response := &model.ChatCompletionResponse{
+			ID:      generateChatID(),
+			Object:  model.ObjectChatCompletion,
+			Created: time.Now().Unix(),
+			Model:   originalModel,
+			Choices: []*model.Choice{
+				{
+					Message: &model.ChatMessage{
+						Role:    model.RoleAssistant,
+						Content: content,
+					},
+					Index: 0,
+				},
+			},
+			Usage: &model.Usage{
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				TotalTokens:      promptTokens + completionTokens,
+			},
+		}
+		return response, nil
 	}
 }
 
@@ -394,9 +414,19 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 						return
 					}
 
+					// 添加空值检查
+					if resp == nil {
+						log.Printf("Received nil response")
+						continue
+					}
+
+					// 处理 204 响应码
 					if resp.ResponseCode == 204 {
-						// 如果最后一条消息不为空，先发送它
-						if resp.Body != nil && resp.Body.MessageWarpper != nil && resp.Body.MessageWarpper.Message != nil {
+						// 发送最终响应前的空值检查
+						if resp.Body != nil && resp.Body.MessageWarpper != nil &&
+							resp.Body.MessageWarpper.Message != nil &&
+							resp.Body.MessageWarpper.Message.Message != "" {
+
 							content := resp.Body.MessageWarpper.Message.Message
 							fullContent += content
 
@@ -420,10 +450,14 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 								isFirstChunk = false
 							}
 
-							responseChan <- response
+							select {
+							case responseChan <- response:
+							case <-ctx.Done():
+								return
+							}
 						}
 
-						// 然后发送最终的完成响应
+						// 发送最终响应
 						completionTokens = tokenizer.NumTokensFromText(fullContent, req.Model)
 						finalResponse := &model.ChatCompletionStreamResponse{
 							ID:      responseID,
@@ -443,11 +477,20 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 								TotalTokens:      promptTokens + completionTokens,
 							},
 						}
-						responseChan <- finalResponse
+
+						select {
+						case responseChan <- finalResponse:
+						case <-ctx.Done():
+							return
+						}
 						return
 					}
 
-					if resp.Body != nil && resp.Body.MessageWarpper != nil && resp.Body.MessageWarpper.Message != nil {
+					// 处理常规消息
+					if resp.Body != nil && resp.Body.MessageWarpper != nil &&
+						resp.Body.MessageWarpper.Message != nil &&
+						resp.Body.MessageWarpper.Message.Message != "" {
+
 						content := resp.Body.MessageWarpper.Message.Message
 						fullContent += content
 
@@ -477,8 +520,8 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 							return
 						}
 					} else {
-						// log.Printf("Received empty or invalid message format")
-						// continue
+						log.Printf("Received incomplete message structure")
+						continue
 					}
 				}
 			}
@@ -491,16 +534,7 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 		}
 		defer s.vertexPool.returnConnection(conn)
 
-		// 使用 buildGRPCRequest 构建请求
 		grpcReq := buildGRPCRequest(req).(*vertexpb.Requests)
-
-		// 添加详细的请求日志
-		// log.Printf("Vertex Request Details:\nModel: %s\nArgs: %+v\nMessages: %+v\nRules: %s",
-		// 	grpcReq.Models,
-		// 	grpcReq.Args,
-		// 	grpcReq.Args.Messages,
-		// 	grpcReq.Args.Rules)
-
 		client := vertexpb.NewVertexInferenceServiceClient(conn)
 		stream, err := client.PredictWithStream(ctx, grpcReq)
 		if err != nil {
@@ -530,23 +564,27 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 					resp, err := stream.Recv()
 					if err != nil {
 						if err != io.EOF {
-							// 改进错误处理，区分不同类型的错误
 							if st, ok := status.FromError(err); ok {
-								// 处理 RST_STREAM 错误
 								if st.Code() == codes.Internal && strings.Contains(st.Message(), "RST_STREAM") {
 									log.Printf("Stream terminated by RST_STREAM")
-									return
+								} else {
+									log.Printf("Stream error with code %v: %v", st.Code(), st.Message())
 								}
-								log.Printf("Stream error with code %v: %v", st.Code(), st.Message())
 							} else {
 								log.Printf("Stream error: %v", err)
 							}
 						}
 						// 发送最终响应
 						if fullContent != "" {
-							completionTokens, _ := tokenizer.CountTokens(fullContent)
-							completionTokens += 3
-							finalResponse := &model.ChatCompletionStreamResponse{
+							if completionTokens, err = tokenizer.CountTokens(fullContent); err != nil {
+								log.Printf("Error counting completion tokens: %v", err)
+								completionTokens = 0
+							} else {
+								completionTokens += 3
+							}
+
+							select {
+							case responseChan <- &model.ChatCompletionStreamResponse{
 								ID:      responseID,
 								Object:  model.ObjectChatCompletionChunk,
 								Created: time.Now().Unix(),
@@ -563,24 +601,28 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 									CompletionTokens: completionTokens,
 									TotalTokens:      promptTokens + completionTokens,
 								},
+							}:
+							case <-ctx.Done():
+								return
 							}
-							responseChan <- finalResponse
 						}
 						return
 					}
 
-					// 添加响应日志
-					// log.Printf("Vertex Response: %+v", resp)
+					if resp == nil {
+						log.Printf("Received nil response")
+						continue
+					}
 
 					// 处理204响应码
 					if resp.ResponseCode == 204 {
-						// 如果最后一条消息不为空，先发送它
 						if resp.Args != nil && resp.Args.Args != nil &&
 							resp.Args.Args.Args != nil && resp.Args.Args.Args.Message != "" {
 							content := resp.Args.Args.Args.Message
 							fullContent += content
 
-							response := model.ChatCompletionStreamResponse{
+							select {
+							case responseChan <- &model.ChatCompletionStreamResponse{
 								ID:      responseID,
 								Object:  model.ObjectChatCompletionChunk,
 								Created: time.Now().Unix(),
@@ -593,26 +635,22 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 										Index: 0,
 									},
 								},
+							}:
+							case <-ctx.Done():
+								return
 							}
-
-							if isFirstChunk {
-								response.Choices[0].Delta.Role = model.RoleAssistant
-								isFirstChunk = false
-							}
-
-							responseChan <- &response
 						}
 
-						// 然后发送最终的完成响应
-						completionTokens, err = tokenizer.CountTokens(fullContent)
-						if err != nil {
+						// 发送最终响应
+						if completionTokens, err = tokenizer.CountTokens(fullContent); err != nil {
 							log.Printf("Error counting completion tokens: %v", err)
 							completionTokens = 0
 						} else {
 							completionTokens += 3
 						}
 
-						finalResponse := model.ChatCompletionStreamResponse{
+						select {
+						case responseChan <- &model.ChatCompletionStreamResponse{
 							ID:      responseID,
 							Object:  model.ObjectChatCompletionChunk,
 							Created: time.Now().Unix(),
@@ -629,18 +667,20 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 								CompletionTokens: completionTokens,
 								TotalTokens:      promptTokens + completionTokens,
 							},
+						}:
+						case <-ctx.Done():
+							return
 						}
-						responseChan <- &finalResponse
 						return
 					}
 
 					// 检查响应结构的完整性
-					if resp != nil && resp.Args != nil && resp.Args.Args != nil &&
+					if resp.Args != nil && resp.Args.Args != nil &&
 						resp.Args.Args.Args != nil && resp.Args.Args.Args.Message != "" {
 						content := resp.Args.Args.Args.Message
 						fullContent += content
 
-						response := model.ChatCompletionStreamResponse{
+						response := &model.ChatCompletionStreamResponse{
 							ID:      responseID,
 							Object:  model.ObjectChatCompletionChunk,
 							Created: time.Now().Unix(),
@@ -661,13 +701,13 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 						}
 
 						select {
-						case responseChan <- &response:
+						case responseChan <- response:
 						case <-ctx.Done():
 							return
 						}
 					} else {
-						// log.Printf("Received empty or invalid message format")
-						// continue
+						log.Printf("Received incomplete message structure")
+						continue
 					}
 				}
 			}
