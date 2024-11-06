@@ -161,10 +161,18 @@ func main() {
 	if cfg.EnableFoolproofRoute {
 		// 遍历预定义的路径
 		for path := range getFoolproofPaths(cfg.APIPrefix) {
-			r.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-				standardPath := cfg.APIPrefix + "/chat/completions"
-				w.Header().Set("X-Warning", "Non-standard path, please use: "+standardPath)
-				chatHandler.HandleCompletion(w, r)
+			path := path // 创建新的变量作用域
+			r.Route(path, func(r chi.Router) {
+				// 添加认证中间件
+				if cfg.APIKey != "" {
+					r.Use(middleware.Auth(cfg.APIKey))
+				}
+
+				r.Post("/", func(w http.ResponseWriter, r *http.Request) {
+					standardPath := cfg.APIPrefix + "/chat/completions"
+					w.Header().Set("X-Warning", "Non-standard path, please use: "+standardPath)
+					chatHandler.HandleCompletion(w, r)
+				})
 			})
 		}
 	}
