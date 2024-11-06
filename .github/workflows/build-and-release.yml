@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - v*
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '发布原因'
+        required: false
+      version:
+        description: '版本号 (例如: v1.0.0)'
+        required: true
+        default: 'latest'
 
 permissions:
   contents: write
@@ -18,35 +27,35 @@ jobs:
             goos: linux
             goarch: amd64
             output_name: pieces-os-go
-            ldflags: "-s -w -extldflags '-static' -X main.Version=v${{ github.run_number }}"
+            ldflags: "-s -w -extldflags '-static' -X main.Version=${{ github.event.inputs.version || github.ref_name }}"
 
           - os: ubuntu-latest
             arch: arm64
             goos: linux
             goarch: arm64
             output_name: pieces-os-go-arm64
-            ldflags: "-s -w -extldflags '-static' -X main.Version=v${{ github.run_number }}"
+            ldflags: "-s -w -extldflags '-static' -X main.Version=${{ github.event.inputs.version || github.ref_name }}"
 
           - os: macos-latest
             arch: amd64
             goos: darwin
             goarch: amd64
             output_name: pieces-os-go-macos
-            ldflags: "-s -w -X main.Version=v${{ github.run_number }}"
+            ldflags: "-s -w -X main.Version=${{ github.event.inputs.version || github.ref_name }}"
 
           - os: macos-latest
             arch: arm64
             goos: darwin
             goarch: arm64
             output_name: pieces-os-go-macos-arm64
-            ldflags: "-s -w -X main.Version=v${{ github.run_number }}"
+            ldflags: "-s -w -X main.Version=${{ github.event.inputs.version || github.ref_name }}"
 
           - os: windows-latest
             arch: amd64
             goos: windows
             goarch: amd64
             output_name: pieces-os-go.exe
-            ldflags: "-s -w -X main.Version=v${{ github.run_number }}"
+            ldflags: "-s -w -X main.Version=${{ github.event.inputs.version || github.ref_name }}"
 
     runs-on: ${{ matrix.os }}
     steps:
