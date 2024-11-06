@@ -1,6 +1,9 @@
 name: Publish Docker Image
 
 on:
+  push:
+    tags:
+      - v*
   workflow_dispatch:
     inputs:
       reason:
@@ -50,7 +53,7 @@ jobs:
           wisdgod/pieces-os-go
           ghcr.io/${{ github.repository }}
         tags: |
-          type=raw,value=${{ github.event.inputs.version }}
+          type=raw,value=${{ github.event.inputs.version || github.ref_name }}
           type=ref,event=branch
           type=ref,event=pr
           type=semver,pattern={{version}}
