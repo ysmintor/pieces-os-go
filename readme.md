@@ -3,7 +3,7 @@
 
 逆向Pieces-OS GRPC流并转换为标准OpenAI接口的项目
 
-所有模型均由 Pieces-OS 提供
+所有模型均由 Pieces-OS 提供，**不建议使用v5.x版本，v4.5版本是最后的稳定版**
 
 # 许可证
 
