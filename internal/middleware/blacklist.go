@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"pieces-os-go/internal/config"
+	"pieces-os-go/internal/model"
 	"strings"
 	"sync"
 	"time"
@@ -156,6 +157,12 @@ func (bm *BlacklistManager) HandleBlacklist(w http.ResponseWriter, r *http.Reque
 	bm.mu.RLock()
 	defer bm.mu.RUnlock()
 
+	ip := GetRealIP(r)
+	if bm.IsBlocked(ip) {
+		writeError(w, model.NewAPIError(model.ErrIPBlocked, "Access denied: IP is blocked", http.StatusForbidden))
+		return
+	}
+
 	entries := []BlacklistEntry{}
 	for ip := range bm.blacklist {
 		if !bm.configuredIPs[ip] {
@@ -198,7 +205,7 @@ func (bm *BlacklistManager) parseIPAndSubnet(ip string) (net.IP, *net.IPNet, err
 	// 解析普通IP地址
 	parsedIP := net.ParseIP(ip)
 	if parsedIP == nil {
-		return nil, nil, fmt.Errorf("invalid IP address: %s", ip)
+		return nil, nil, model.NewAPIError(model.ErrInvalidRequest, fmt.Sprintf("invalid IP address: %s", ip), http.StatusBadRequest)
 	}
 
 	// 根据IP类型返回对应的子网掩码

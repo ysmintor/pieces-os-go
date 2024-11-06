@@ -402,6 +402,8 @@ IP_BLACKLIST=1.2.3.4,2001:db8::1
 curl -O -H "Authorization: Bearer your_admin_key_here" http://localhost:8787/admin/blacklist
 ```
 
+> **注意**: 如果 token 中包含特殊字符（如 !），请使用单引号 '' 而不是双引号 "" 来包裹整个 Authorization 头，以避免 bash 解释这些特殊字符。
+
 # Docker 部署说明
 
 ### 使用 Docker Compose（推荐）

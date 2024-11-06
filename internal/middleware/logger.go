@@ -93,16 +93,20 @@ func Logger(cfg *config.Config) func(http.Handler) http.Handler {
 
 type responseWriter struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool // 添加此字段来追踪是否已经写入头部
 }
 
 func wrapResponseWriter(w http.ResponseWriter) *responseWriter {
-	return &responseWriter{w, http.StatusOK}
+	return &responseWriter{w, http.StatusOK, false}
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
-	rw.status = code
-	rw.ResponseWriter.WriteHeader(code)
+	if !rw.wroteHeader { // 只在第一次调用时写入
+		rw.status = code
+		rw.ResponseWriter.WriteHeader(code)
+		rw.wroteHeader = true
+	}
 }
 
 // 添加 Flush 方法实现 http.Flusher 接口

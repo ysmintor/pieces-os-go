@@ -27,109 +27,158 @@ func NewChatHandler(cfg *config.Config) *ChatHandler {
 func (h *ChatHandler) HandleCompletion(w http.ResponseWriter, r *http.Request) {
 	var req model.ChatCompletionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]interface{}{
-				"message": err.Error(),
-				"type":    "invalid_request_error",
-				"param":   nil,
-				"code":    "invalid_request",
-			},
-		})
+		writeError(w, model.NewAPIError(model.ErrInvalidRequest, err.Error(), http.StatusBadRequest))
 		return
 	}
 
 	if req.Stream {
-		// 设置 SSE headers
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		h.handleStreamCompletion(w, r, &req)
+		return
+	}
 
-		// 创建一个done channel来控制流
-		done := make(chan bool)
-		defer close(done)
+	h.handleNormalCompletion(w, r, &req)
+}
 
-		// 调用服务层的流式方法
-		stream, errChan := h.chatService.CreateCompletionStream(r.Context(), &req)
+// 处理流式请求
+func (h *ChatHandler) handleStreamCompletion(w http.ResponseWriter, r *http.Request, req *model.ChatCompletionRequest) {
+	// 设置 SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		go func() {
-			defer func() {
-				done <- true
-			}()
+	flusher, ok := w.(http.Flusher)
+	if !ok || flusher == nil {
+		writeError(w, model.NewAPIError(model.ErrInternalError, "Streaming not supported", http.StatusInternalServerError))
+		return
+	}
 
-			for chunk := range stream {
-				select {
-				case err := <-errChan:
-					if err != nil {
-						log.Printf("Stream error: %v", err)
-						w.Header().Set("Content-Type", "application/json")
-						json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-						return
+	stream, errChan := h.chatService.CreateCompletionStream(r.Context(), req)
+
+	for {
+		select {
+		case <-r.Context().Done():
+			// 处理连接关闭和上下文取消
+			log.Printf("Connection closed or context cancelled: %v", r.Context().Err())
+			return
+
+		case err := <-errChan:
+			if err != nil {
+				if apiErr, ok := err.(*model.APIError); ok {
+					if err := writeSSEError(w, flusher, apiErr.Code, apiErr.Message); err != nil {
+						log.Printf("Failed to write SSE error: %v", err)
 					}
-				default:
-					streamResp := chunk
-
-					data, err := json.Marshal(streamResp)
-					if err != nil {
-						log.Printf("Error marshaling response: %v", err)
-						return
+				} else {
+					if err := writeSSEError(w, flusher, model.ErrInternalError, err.Error()); err != nil {
+						log.Printf("Failed to write SSE error: %v", err)
 					}
+				}
+				return
+			}
 
-					// 写入 SSE 格式数据
-					_, err = fmt.Fprintf(w, "data: %s\n\n", data)
-					if err != nil {
-						log.Printf("Error writing response: %v", err)
-						return
-					}
-					w.(http.Flusher).Flush()
+		case chunk, ok := <-stream:
+			if !ok {
+				// 流结束前检查上下文状态
+				if r.Context().Err() != nil {
+					return
+				}
+				// 流正常结束
+				if err := writeSSEChunk(w, flusher, "[DONE]"); err != nil {
+					log.Printf("Failed to write final SSE chunk: %v", err)
+				}
+				return
+			}
+
+			if chunk != nil {
+				// 写入数据前检查上下文状态
+				if r.Context().Err() != nil {
+					return
+				}
+				if err := writeSSEChunk(w, flusher, chunk); err != nil {
+					log.Printf("Failed to write SSE chunk: %v", err)
+					return
 				}
 			}
-		}()
-
-		// 等待流完成
-		<-done
-
-		// 发送结束标记
-		fmt.Fprintf(w, "data: [DONE]\n\n")
-		w.(http.Flusher).Flush()
-		return
-	}
-
-	resp, err := h.chatService.CreateCompletion(r.Context(), &req)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-
-		// 检查是否是 APIError
-		if apiErr, ok := err.(*model.APIError); ok {
-			w.WriteHeader(apiErr.Status)
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error": map[string]interface{}{
-					"message": apiErr.Message,
-					"type":    "invalid_request_error",
-					"param":   "model",
-					"code":    apiErr.Code,
-				},
-			})
-			return
 		}
+	}
+}
 
-		// 其他错误使用 500
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": map[string]interface{}{
-				"message": err.Error(),
-				"type":    "internal_error",
-				"param":   nil,
-				"code":    "internal_error",
-			},
-		})
+// 处理普通请求
+func (h *ChatHandler) handleNormalCompletion(w http.ResponseWriter, r *http.Request, req *model.ChatCompletionRequest) {
+	resp, err := h.chatService.CreateCompletion(r.Context(), req)
+	if err != nil {
+		if apiErr, ok := err.(*model.APIError); ok {
+			writeError(w, apiErr)
+		} else {
+			writeError(w, model.NewAPIError(model.ErrInternalError, err.Error(), http.StatusInternalServerError))
+		}
 		return
 	}
 
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// 辅助函数
+func writeError(w http.ResponseWriter, err *model.APIError) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	w.WriteHeader(err.Status)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": err.Message,
+			"type":    "error",
+			"code":    err.Code,
+		},
+	})
+}
+
+// 修改辅助函数，增加错误返回
+func writeSSEError(w http.ResponseWriter, flusher http.Flusher, code model.ErrorCode, message string) error {
+	if flusher == nil {
+		return fmt.Errorf("flusher is nil")
+	}
+
+	errResp := map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": message,
+			"code":    code,
+		},
+	}
+	data, err := json.Marshal(errResp)
+	if err != nil {
+		return fmt.Errorf("failed to marshal error response: %v", err)
+	}
+
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+		return fmt.Errorf("failed to write error message: %v", err)
+	}
+
+	flusher.Flush()
+	return nil
+}
+
+func writeSSEChunk(w http.ResponseWriter, flusher http.Flusher, chunk interface{}) error {
+	if flusher == nil {
+		return fmt.Errorf("flusher is nil, cannot write SSE chunk")
+	}
+
+	data, err := json.Marshal(chunk)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(w, "data: %s\n\n", data)
+	if err != nil {
+		return err
+	}
+
+	flusher.Flush()
+	return nil
+}
+
+func writeJSON(w http.ResponseWriter, status int, v interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
 }
 
 // WithModel 包装处理函数，为请求预设模型

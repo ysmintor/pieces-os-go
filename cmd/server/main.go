@@ -76,6 +76,19 @@ func getFoolproofPaths(apiPrefix string) map[string]bool {
 	return foolproofPathsMap
 }
 
+// 辅助函数
+func writeError(w http.ResponseWriter, err *model.APIError) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(err.Status)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": err.Message,
+			"type":    "error",
+			"code":    err.Code,
+		},
+	})
+}
+
 func main() {
 	// 打印版本信息
 	log.Printf("Starting Pieces-OS-Go Version: %s, BuildTime: %s", Version, BuildTime)
@@ -111,12 +124,12 @@ func main() {
 
 	// 自定义 404 处理器
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{
-			"error": string(model.ErrRouteNotFound),
-			"path":  r.URL.Path,
-		})
+		writeError(w, model.NewAPIError(model.ErrRouteNotFound, "Requested path not found", http.StatusNotFound))
+	})
+
+	// 自定义 405 处理器
+	r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, model.NewAPIError(model.ErrMethodNotAllowed, "Method not allowed", http.StatusMethodNotAllowed))
 	})
 
 	// 健康检查路由

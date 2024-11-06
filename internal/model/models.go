@@ -27,6 +27,93 @@ var (
 	initModelsOnce  sync.Once
 )
 
+// var SupportedModels = map[string]Model{
+// 	"chat-bison": {
+// 		ID:      "chat-bison",
+// 		Object:  "model",
+// 		Created: 1694793600,
+// 		OwnedBy: "google",
+// 	},
+// 	"gpt-4o-mini": {
+// 		ID:      "gpt-4o-mini",
+// 		Object:  "model",
+// 		Created: 1721232000,
+// 		OwnedBy: "openai",
+// 	},
+// 	"gemini-1.5-pro": {
+// 		ID:      "gemini-1.5-pro",
+// 		Object:  "model",
+// 		Created: 1716825600,
+// 		OwnedBy: "google",
+// 	},
+// 	"gpt-4o": {
+// 		ID:      "gpt-4o",
+// 		Object:  "model",
+// 		Created: 1715702400,
+// 		OwnedBy: "openai",
+// 	},
+// 	"codechat-bison": {
+// 		ID:      "codechat-bison",
+// 		Object:  "model",
+// 		Created: 1694793600,
+// 		OwnedBy: "google",
+// 	},
+// 	"claude-3-sonnet@20240229": {
+// 		ID:      "claude-3-sonnet@20240229",
+// 		Object:  "model",
+// 		Created: 1709136000,
+// 		OwnedBy: "anthropic",
+// 	},
+// 	"gemini-pro": {
+// 		ID:      "gemini-pro",
+// 		Object:  "model",
+// 		Created: 1704643200,
+// 		OwnedBy: "google",
+// 	},
+// 	"claude-3-opus@20240229": {
+// 		ID:      "claude-3-opus@20240229",
+// 		Object:  "model",
+// 		Created: 1709136000,
+// 		OwnedBy: "anthropic",
+// 	},
+// 	"gpt-4-turbo": {
+// 		ID:      "gpt-4-turbo",
+// 		Object:  "model",
+// 		Created: 1707408000,
+// 		OwnedBy: "openai",
+// 	},
+// 	"gemini-1.5-flash": {
+// 		ID:      "gemini-1.5-flash",
+// 		Object:  "model",
+// 		Created: 1716825600,
+// 		OwnedBy: "google",
+// 	},
+// 	"claude-3-5-sonnet@20240620": {
+// 		ID:      "claude-3-5-sonnet@20240620",
+// 		Object:  "model",
+// 		Created: 1718812800,
+// 		OwnedBy: "anthropic",
+// 	},
+// 	"claude-3-haiku@20240307": {
+// 		ID:      "claude-3-haiku@20240307",
+// 		Object:  "model",
+// 		Created: 1711468800,
+// 		OwnedBy: "anthropic",
+// 	},
+// 	"gpt-3.5-turbo": {
+// 		ID:      "gpt-3.5-turbo",
+// 		Object:  "model",
+// 		Created: 1694793600,
+// 		OwnedBy: "openai",
+// 	},
+// 	"gpt-4": {
+// 		ID:      "gpt-4",
+// 		Object:  "model",
+// 		Created: 1694793600,
+// 		OwnedBy: "openai",
+// 	},
+// }
+
 func InitModels() error {
 	var err error
 	initModelsOnce.Do(func() {

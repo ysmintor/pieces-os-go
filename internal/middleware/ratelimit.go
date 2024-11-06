@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"pieces-os-go/internal/config"
+	"pieces-os-go/internal/model"
 	"strings"
 	"sync"
 	"time"
@@ -73,7 +74,7 @@ func (rl *RateLimiter) RateLimit(next http.Handler) http.Handler {
 
 		// 检查是否在黑名单中
 		if rl.blacklist.IsBlocked(ip) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
+			writeError(w, model.NewAPIError(model.ErrIPBlocked, "IP has been blocked", http.StatusForbidden))
 			return
 		}
 
@@ -110,7 +111,7 @@ func (rl *RateLimiter) RateLimit(next http.Handler) http.Handler {
 				rl.mu.Unlock()
 				// 记录违规
 				rl.blacklist.RecordViolation(ip)
-				http.Error(w, "Too many requests", http.StatusTooManyRequests)
+				writeError(w, model.NewAPIError(model.ErrRateLimitExceeded, "Rate limit exceeded", http.StatusTooManyRequests))
 				return
 			}
 

@@ -30,15 +30,14 @@ func TimeoutMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var timeout time.Duration
+			isStreamRequest := r.Header.Get("Accept") == "text/event-stream"
 
-			// 根据请求类型选择超时时间
-			if r.Header.Get("Accept") == "text/event-stream" {
+			if isStreamRequest {
 				timeout = cfg.StreamTimeout
 			} else {
 				timeout = cfg.RequestTimeout
 			}
 
-			// 如果超时时间为0，表示不设置超时
 			if timeout == 0 {
 				next.ServeHTTP(w, r)
 				return
@@ -47,33 +46,65 @@ func TimeoutMiddleware(cfg *config.Config) func(http.Handler) http.Handler {
 			ctx, cancel := context.WithTimeout(r.Context(), timeout)
 			defer cancel()
 
-			r = r.WithContext(ctx)
-			done := make(chan bool)
+			// 使用自定义的 ResponseWriter 来捕获状态码
+			rw := newTimeoutResponseWriter(w)
+
+			done := make(chan struct{})
 			go func() {
-				next.ServeHTTP(w, r)
-				done <- true
+				defer close(done)
+				next.ServeHTTP(rw, r.WithContext(ctx))
 			}()
 
 			select {
 			case <-ctx.Done():
-				w.WriteHeader(http.StatusGatewayTimeout)
-				var errCode model.ErrorCode
-				if r.Header.Get("Accept") == "text/event-stream" {
-					errCode = model.ErrStreamTimeout
-					atomic.AddInt64(&stats.streamTimeouts, 1)
-				} else {
-					errCode = model.ErrRequestTimeout
-					atomic.AddInt64(&stats.normalTimeouts, 1)
+				if ctx.Err() == context.DeadlineExceeded {
+					// 只有在还没有写入响应时才写入超时错误
+					if !rw.written {
+						if isStreamRequest {
+							atomic.AddInt64(&stats.streamTimeouts, 1)
+							writeTimeoutError(w, model.ErrStreamTimeout, "Stream timeout")
+						} else {
+							atomic.AddInt64(&stats.normalTimeouts, 1)
+							writeTimeoutError(w, model.ErrRequestTimeout, "Request timeout")
+						}
+					}
 				}
-
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"error":  errCode,
-					"status": http.StatusGatewayTimeout,
-				})
-				return
 			case <-done:
-				return
+				// 请求正常完成
 			}
 		})
 	}
+}
+
+type timeoutResponseWriter struct {
+	http.ResponseWriter
+	written bool
+	status  int
+}
+
+func newTimeoutResponseWriter(w http.ResponseWriter) *timeoutResponseWriter {
+	return &timeoutResponseWriter{ResponseWriter: w, status: http.StatusOK}
+}
+
+func (w *timeoutResponseWriter) WriteHeader(status int) {
+	w.written = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *timeoutResponseWriter) Write(b []byte) (int, error) {
+	w.written = true
+	return w.ResponseWriter.Write(b)
+}
+
+func writeTimeoutError(w http.ResponseWriter, code model.ErrorCode, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusGatewayTimeout)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": map[string]interface{}{
+			"message": message,
+			"type":    "timeout_error",
+			"code":    code,
+		},
+	})
 }
