@@ -15,19 +15,19 @@ func Auth(apiKey string) func(http.Handler) http.Handler {
 
 			auth := r.Header.Get("Authorization")
 			if auth == "" {
-				http.Error(w, "未提供认证信息", http.StatusUnauthorized)
+				http.Error(w, "Missing authentication information", http.StatusUnauthorized)
 				return
 			}
 
 			const prefix = "Bearer "
 			if !strings.HasPrefix(auth, prefix) {
-				http.Error(w, "认证格式错误", http.StatusUnauthorized)
+				http.Error(w, "Invalid authentication format", http.StatusUnauthorized)
 				return
 			}
 
 			token := auth[len(prefix):]
 			if token != apiKey {
-				http.Error(w, "无效的API密钥", http.StatusUnauthorized)
+				http.Error(w, "Invalid API key", http.StatusUnauthorized)
 				return
 			}
 

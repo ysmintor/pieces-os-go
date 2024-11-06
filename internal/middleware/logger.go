@@ -2,15 +2,18 @@ package middleware
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"pieces-os-go/internal/config"
 	"pieces-os-go/internal/handler"
 )
 
@@ -43,29 +46,46 @@ func InitLogger(logFile string) error {
 	return nil
 }
 
-func Logger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		wrapped := wrapResponseWriter(w)
+func Logger(cfg *config.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			wrapped := wrapResponseWriter(w)
 
-		// 增加请求计数
-		handler.IncrementCounter(strings.HasPrefix(r.URL.Path, "/v1"))
+			// 增加请求计数
+			handler.IncrementCounter(strings.HasPrefix(r.URL.Path, cfg.APIPrefix))
 
-		next.ServeHTTP(wrapped, r)
+			// 获取请求体中的模型信息
+			var modelInfo string
+			if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/chat/completions") {
+				var requestBody struct {
+					Model string `json:"model"`
+				}
+				if body, err := io.ReadAll(r.Body); err == nil {
+					r.Body = io.NopCloser(bytes.NewBuffer(body)) // 重新设置 body 以供后续读取
+					if err := json.Unmarshal(body, &requestBody); err == nil {
+						modelInfo = fmt.Sprintf(" model=%s", requestBody.Model)
+					}
+				}
+			}
 
-		logMutex.Lock()
-		logger := log.New(bufWriter, "", log.LstdFlags)
-		logger.Printf(
-			"%s %s %s %d %s",
-			r.Method,
-			r.RequestURI,
-			r.RemoteAddr,
-			wrapped.status,
-			time.Since(start),
-		)
-		bufWriter.Flush()
-		logMutex.Unlock()
-	})
+			next.ServeHTTP(wrapped, r)
+
+			logMutex.Lock()
+			logger := log.New(bufWriter, "", log.LstdFlags)
+			logger.Printf(
+				"%s %s%s %s %d %s",
+				r.Method,
+				r.RequestURI,
+				modelInfo,
+				r.RemoteAddr,
+				wrapped.status,
+				time.Since(start),
+			)
+			bufWriter.Flush()
+			logMutex.Unlock()
+		})
+	}
 }
 
 type responseWriter struct {
@@ -90,17 +110,17 @@ func (rw *responseWriter) Flush() {
 }
 
 // 添加 Push 方法实现 http.Pusher 接口 (可选，用于 HTTP/2)
-func (rw *responseWriter) Push(target string, opts *http.PushOptions) error {
-	if p, ok := rw.ResponseWriter.(http.Pusher); ok {
-		return p.Push(target, opts)
-	}
-	return http.ErrNotSupported
-}
+// func (rw *responseWriter) Push(target string, opts *http.PushOptions) error {
+// 	if p, ok := rw.ResponseWriter.(http.Pusher); ok {
+// 		return p.Push(target, opts)
+// 	}
+// 	return http.ErrNotSupported
+// }
 
 // 添加 Hijack 方法实现 http.Hijacker 接口 (可选，用于 WebSocket)
-func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := rw.ResponseWriter.(http.Hijacker); ok {
-		return h.Hijack()
-	}
-	return nil, nil, http.ErrNotSupported
-}
+// func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+// 	if h, ok := rw.ResponseWriter.(http.Hijacker); ok {
+// 		return h.Hijack()
+// 	}
+// 	return nil, nil, http.ErrNotSupported
+// }

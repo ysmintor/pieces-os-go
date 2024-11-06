@@ -3,7 +3,7 @@
 
 逆向Pieces-OS GRPC流并转换为标准OpenAI接口的项目
 
-所有模型均由 Pieces-OS 提供，本项目参考 [Nekohy/pieces-os](https://github.com/Nekohy/pieces-os) 开发，感谢大佬的贡献
+所有模型均由 Pieces-OS 提供
 
 # 许可证
 
@@ -52,7 +52,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # todo
 - [x] 流式实现
-- [ ] Docker支持
+- [x] Docker支持
 - [x] Go语言重构
 - [x] 实现Tokens计算
 
@@ -188,7 +188,7 @@ curl --request POST 'http://localhost:8787/v1/chat/completions' \
 # 环境变量
 ## `API_PREFIX`
 - **描述**: API 请求的前缀路径
-- **默认值**: `'/v1/'`
+- **默认值**: `'/v1'`
 - **环境变量**: `API_PREFIX`
 
 ## `API_KEY`
@@ -243,10 +243,16 @@ curl --request POST 'http://localhost:8787/v1/chat/completions' \
 - **环境变量**: `SCALE_INTERVAL`
 
 ## `ENABLE_MODEL_ROUTE`
-- **描述**: 是否启用模型路由功能（v19版本新增）
+- **描述**: 是否启用模型路由功能
 - **默认值**: `false`
 - **环境变量**: `ENABLE_MODEL_ROUTE`
-- **说明**: 启用后可通过 `/{model_name}/v1/chat/completions` 格式直接访问指定模型
+- **说明**: 启用后可通过 `/{model_name}{API_PREFIX}/chat/completions` 格式直接访问指定模型
+
+## `ENABLE_FOOLPROOF_ROUTE`
+- **描述**: 是否启用防呆路由功能
+- **默认值**: `false`
+- **环境变量**: `ENABLE_FOOLPROOF_ROUTE`
+- **说明**: 启用后可通过非标准格式访问 `/chat/completions`
 
 # Docker 部署说明
 
@@ -266,7 +272,7 @@ curl -O https://raw.githubusercontent.com/wisdgod/pieces-os-go/main/docker-compo
 cat > .env << EOF
 API_KEY=your_api_key_here
 PORT=8787
-API_PREFIX=/v1/
+API_PREFIX=/v1
 MIN_POOL_SIZE=5
 MAX_POOL_SIZE=20
 SCALE_INTERVAL=30
@@ -274,6 +280,8 @@ DEBUG=false
 DEFAULT_MODEL=
 MAX_RETRIES=3
 TIMEOUT=30
+ENABLE_MODEL_ROUTE=false
+ENABLE_FOOLPROOF_ROUTE=false
 EOF
 ```
 

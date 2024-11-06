@@ -10,16 +10,71 @@ import (
 	"pieces-os-go/internal/model"
 	"pieces-os-go/pkg/tokenizer"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 )
 
-// 添加版本和构建时间变量
+// 全局变量
 var (
-	Version   = "dev"
-	BuildTime = "unknown"
+	Version           = "dev"
+	BuildTime         = "unknown"
+	foolproofPathsMap map[string]bool
+	initFoolproofOnce sync.Once
 )
+
+// getFoolproofPaths 获取防呆路由
+func getFoolproofPaths(apiPrefix string) map[string]bool {
+	if foolproofPathsMap != nil {
+		return foolproofPathsMap
+	}
+
+	initFoolproofOnce.Do(func() {
+		// 基础路径段
+		segments := []string{
+			"/chat/completions",
+			"/completions",
+		}
+
+		// 使用 map 来去重
+		pathsMap := make(map[string]bool)
+
+		// 生成所有可能的路径组合
+		for _, seg1 := range segments {
+			// 添加基本路径
+			pathsMap[seg1] = true
+
+			// 添加带 API 前缀的路径
+			if apiPrefix != "" {
+				pathsMap[apiPrefix+seg1] = true
+			}
+
+			// 添加组合路径
+			for _, seg2 := range segments {
+				// 基本组合路径
+				pathsMap[seg1+seg2] = true
+
+				// 带 API 前缀的组合路径
+				if apiPrefix != "" {
+					pathsMap[apiPrefix+seg1+seg2] = true
+					pathsMap[seg1+apiPrefix+seg2] = true
+					pathsMap[apiPrefix+seg1+apiPrefix+seg2] = true
+				}
+			}
+		}
+
+		// 移除标准路由
+		standardPath := "/chat/completions"
+		if apiPrefix != "" {
+			standardPath = apiPrefix + "/chat/completions"
+		}
+		delete(pathsMap, standardPath)
+
+		foolproofPathsMap = pathsMap
+	})
+	return foolproofPathsMap
+}
 
 func main() {
 	// 打印版本信息
@@ -32,25 +87,29 @@ func main() {
 	if err := tokenizer.InitTokenizers(); err != nil {
 		log.Fatalf("Failed to initialize tokenizers: %v", err)
 	}
+	if cfg.EnableFoolproofRoute && cfg.APIPrefix == "" {
+		cfg.EnableFoolproofRoute = false
+		log.Printf("Warning: Foolproof routing is not supported when APIPrefix is empty, automatically disabled. Recommend using /v1 as prefix")
+	}
 
 	r := chi.NewRouter()
+
+	// 创建处理器实例
+	chatHandler := handler.NewChatHandler(cfg)
+
+	// 全局中间件
+	r.Use(middleware.Logger(cfg))
+	r.Use(middleware.CORS)
 
 	// 自定义 404 处理器
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		json.NewEncoder(w).Encode(map[string]string{
-			"error": "路由不存在",
+			"error": string(model.ErrRouteNotFound),
 			"path":  r.URL.Path,
 		})
 	})
-
-	// 创建处理器实例
-	chatHandler := handler.NewChatHandler(cfg)
-
-	// 全局中间件
-	r.Use(middleware.Logger)
-	r.Use(middleware.CORS)
 
 	// 健康检查路由
 	r.Get("/", handler.HealthCheck)
@@ -95,6 +154,18 @@ func main() {
 		}
 	}
 
+	// 防呆路由
+	if cfg.EnableFoolproofRoute {
+		// 遍历预定义的路径
+		for path := range getFoolproofPaths(cfg.APIPrefix) {
+			r.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+				standardPath := cfg.APIPrefix + "/chat/completions"
+				w.Header().Set("X-Warning", "Non-standard path, please use: "+standardPath)
+				chatHandler.HandleCompletion(w, r)
+			})
+		}
+	}
+
 	// 每秒重置RPS计数器
 	go func() {
 		ticker := time.NewTicker(time.Second)
@@ -118,5 +189,9 @@ func main() {
 	apiEndpoint := cfg.APIPrefix
 	log.Printf("Server starting on port %s", cfg.Port)
 	log.Printf("API endpoint available at %s", apiEndpoint)
+	log.Printf("本地可通过以下地址访问服务:")
+	log.Printf("- http://localhost%s/", serverAddr)
+	log.Printf("- http://127.0.0.1%s/", serverAddr)
+	log.Printf("- http://[::1]%s/", serverAddr)
 	log.Fatal(http.ListenAndServe(serverAddr, r))
 }

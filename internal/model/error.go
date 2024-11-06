@@ -5,6 +5,7 @@ import "fmt"
 type ErrorCode string
 
 const (
+	ErrRouteNotFound      ErrorCode = "route_not_found"
 	ErrInvalidRequest     ErrorCode = "invalid_request"
 	ErrUnauthorized       ErrorCode = "unauthorized"
 	ErrRateLimitExceeded  ErrorCode = "rate_limit_exceeded"
