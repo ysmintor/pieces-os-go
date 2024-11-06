@@ -35,3 +35,24 @@ func Auth(apiKey string) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// AdminAuth 创建管理接口认证中间件
+func AdminAuth(adminKey string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			token := strings.TrimPrefix(auth, "Bearer ")
+			if token != adminKey || adminKey == "" {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}

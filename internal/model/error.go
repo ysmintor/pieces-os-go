@@ -12,6 +12,8 @@ const (
 	ErrInternalError      ErrorCode = "internal_error"
 	ErrServiceUnavailable ErrorCode = "service_unavailable"
 	ErrModelNotFound      ErrorCode = "model_not_found"
+	ErrRequestTimeout     ErrorCode = "request_timeout"
+	ErrStreamTimeout      ErrorCode = "stream_timeout"
 )
 
 type APIError struct {

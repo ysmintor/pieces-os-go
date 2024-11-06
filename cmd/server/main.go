@@ -97,12 +97,17 @@ func main() {
 
 	r := chi.NewRouter()
 
-	// 创建处理器实例
-	chatHandler := handler.NewChatHandler(cfg)
+	// 创建RateLimiter实例
+	rateLimiter := middleware.NewRateLimiter(cfg)
 
-	// 全局中间件
+	// 添加全局中间件
 	r.Use(middleware.Logger(cfg))
 	r.Use(middleware.CORS)
+	r.Use(middleware.TimeoutMiddleware(cfg))
+	r.Use(rateLimiter.RateLimit)
+
+	// 创建处理器实例
+	chatHandler := handler.NewChatHandler(cfg)
 
 	// 自定义 404 处理器
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
@@ -125,9 +130,14 @@ func main() {
 			r.Use(middleware.Auth(cfg.APIKey))
 		}
 
-		// API endpoints
+		// 为 /chat/completions 添加特殊的限流中间件
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.NewStrictRateLimiter(cfg).RateLimit)
+			r.Post("/chat/completions", chatHandler.HandleCompletion)
+		})
+
+		// 其他API endpoints保持原有的限流规则
 		r.Get("/models", handler.ListModels)
-		r.Post("/chat/completions", chatHandler.HandleCompletion)
 	})
 
 	// 如果启用了模型路由，添加带模型名的路由
@@ -176,6 +186,29 @@ func main() {
 			})
 		}
 	}
+
+	// 黑名单文件下载路由
+	r.Route("/admin", func(r chi.Router) {
+		// 使用管理密钥认证
+		if cfg.AdminKey != "" {
+			r.Use(middleware.AdminAuth(cfg.AdminKey))
+		}
+
+		r.Get("/blacklist", func(w http.ResponseWriter, r *http.Request) {
+			// 检查请求IP是否在黑名单中
+			if rateLimiter.GetBlacklist().IsBlocked(middleware.GetRealIP(r)) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+
+			// 设置文件下载头
+			w.Header().Set("Content-Disposition", "attachment; filename=blacklist.txt")
+			w.Header().Set("Content-Type", "text/plain")
+
+			// 读取并返回文件内容
+			http.ServeFile(w, r, cfg.BlacklistFile)
+		})
+	})
 
 	// 每秒重置RPS计数器
 	go func() {

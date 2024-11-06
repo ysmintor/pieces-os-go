@@ -52,12 +52,15 @@ func Logger(cfg *config.Config) func(http.Handler) http.Handler {
 			start := time.Now()
 			wrapped := wrapResponseWriter(w)
 
+			// 获取真实IP
+			realIP := GetRealIP(r)
+
 			// 增加请求计数
 			handler.IncrementCounter(strings.HasPrefix(r.URL.Path, cfg.APIPrefix))
 
 			// 获取请求体中的模型信息
 			var modelInfo string
-			if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/chat/completions") {
+			if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/completions") {
 				var requestBody struct {
 					Model string `json:"model"`
 				}
@@ -74,11 +77,11 @@ func Logger(cfg *config.Config) func(http.Handler) http.Handler {
 			logMutex.Lock()
 			logger := log.New(bufWriter, "", log.LstdFlags)
 			logger.Printf(
-				"%s %s%s %s %d %s",
+				"%s %s%s IP=%s Status=%d Duration=%s",
 				r.Method,
 				r.RequestURI,
 				modelInfo,
-				r.RemoteAddr,
+				realIP,
 				wrapped.status,
 				time.Since(start),
 			)
