@@ -400,6 +400,9 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 			var fullContent string
 			isFirstChunk := true
 
+			// 获取当前时间戳作为默认值
+			currentTime := time.Now().Unix()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -420,6 +423,12 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 						continue
 					}
 
+					// 添加空值检查并使用默认时间
+					createdTime := currentTime
+					if resp.Body != nil {
+						createdTime = int64(resp.Body.Time)
+					}
+
 					// 处理 204 响应码
 					if resp.ResponseCode == 204 {
 						// 发送最终响应前的空值检查
@@ -433,7 +442,7 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 							response := &model.ChatCompletionStreamResponse{
 								ID:      responseID,
 								Object:  model.ObjectChatCompletionChunk,
-								Created: int64(resp.Body.Time),
+								Created: createdTime,
 								Model:   originalModel,
 								Choices: []*model.ChatCompletionStreamChoice{
 									{
@@ -462,7 +471,7 @@ func (s *GRPCService) SendCompletionStream(ctx context.Context, req *model.ChatC
 						finalResponse := &model.ChatCompletionStreamResponse{
 							ID:      responseID,
 							Object:  model.ObjectChatCompletionChunk,
-							Created: int64(resp.Body.Time),
+							Created: createdTime,
 							Model:   originalModel,
 							Choices: []*model.ChatCompletionStreamChoice{
 								{
