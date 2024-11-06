@@ -76,7 +76,6 @@ WORKDIR /app
 
 # 从构建阶段复制二进制文件
 COPY --from=builder /app/pieces-os-go .
-COPY --from=builder /app/cloud_model.json ./
 
 # 创建非 root 用户
 RUN useradd -r -u 1001 -g root pieces
