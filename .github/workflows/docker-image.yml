@@ -50,7 +50,7 @@ jobs:
       uses: docker/metadata-action@v5.5.1
       with:
         images: |
-          wisdgod/pieces-os-go
+          ysmintor/pieces-os-go
           ghcr.io/${{ github.repository }}
         tags: |
           type=raw,value=${{ github.event.inputs.version || github.ref_name }}
